@@ -2,7 +2,16 @@ import { Command, InvalidArgumentError, Option } from "commander";
 import pkg from "../package.json" with { type: "json" };
 import { Client } from "./api.ts";
 import type { ApiEvent, ApiRepo, Branches, EventType, Mode, RepoResponse } from "./api-types.ts";
-import { configPath, deleteConfig, loadConfig, normalizeUrl, resolveConfig, saveConfig } from "./config.ts";
+import {
+  configPath,
+  DEFAULT_SERVER_URL,
+  DEFAULT_TOKEN_PAGE,
+  deleteConfig,
+  loadConfig,
+  normalizeUrl,
+  resolveConfig,
+  saveConfig,
+} from "./config.ts";
 import { ApiRequestError, CliError } from "./errors.ts";
 import { resolveRepo, slug, type RepoSlug } from "./git.ts";
 import { needsConfirmation, promotionRefs, toPromotion } from "./promotion.ts";
@@ -10,7 +19,6 @@ import { DEFAULT_MODEL, loadLocalConfig, localConfigPath, saveLocalConfig } from
 import { prCommand } from "./pr.ts";
 import { commitCommand, shipCommand } from "./ship.ts";
 import {
-  ask,
   askHidden,
   c,
   columns,
@@ -83,10 +91,12 @@ function eventLines(events: ApiEvent[], showRepo: boolean): string[] {
 
 async function login(urlArg: string | undefined) {
   const saved = await loadConfig().catch(() => null);
-  const fallback = urlArg ?? process.env.OCHE_URL ?? saved?.url;
-  const url = normalizeUrl(await ask("Oche server URL", fallback ? normalizeUrl(fallback) : undefined));
-  if (isInteractive()) process.stderr.write(c.dim("Create a token in the dashboard under Settings → API tokens.\n"));
-  const token = await askHidden("API token");
+  // Hosted Oche unless told otherwise; self-hosters pass their URL once.
+  const url = normalizeUrl(urlArg ?? process.env.OCHE_URL ?? saved?.url ?? DEFAULT_SERVER_URL);
+  const where = url === DEFAULT_SERVER_URL ? DEFAULT_TOKEN_PAGE : "your Oche dashboard under Settings";
+  process.stderr.write(`Logging in to ${c.bold(url)}\n`);
+  process.stderr.write(c.dim(`Create a CLI token at ${where}, then paste it here.\n`));
+  const token = await askHidden("CLI token");
   if (!token) throw new CliError("No token entered.");
 
   const me = await new Client(url, token, "config").me().catch((e: unknown) => {
@@ -108,7 +118,7 @@ async function logout() {
   const saved = await loadConfig().catch(() => null);
   if (await deleteConfig()) {
     ok(`Logged out${saved?.url ? ` of ${saved.url}` : ""}.`);
-    print(c.dim("The token keeps working until you revoke it in the dashboard (Settings → API tokens)."));
+    print(c.dim("The token keeps working until you revoke it in the dashboard (Settings → CLI tokens)."));
   } else {
     print("Not logged in.");
   }
@@ -362,7 +372,7 @@ export function buildProgram(): Command {
   const repoArg = "[owner/repo]";
   const repoHelp = "defaults to the GitHub repo of git remote origin";
 
-  program.command("login").description("Save the server URL and an API token").argument("[url]", "Oche server URL").action(login);
+  program.command("login").description("Sign in with a CLI token from the dashboard").argument("[url]", "Oche server URL (only if you self-host)").action(login);
 
   program.command("logout").description("Forget the saved login").action(logout);
 

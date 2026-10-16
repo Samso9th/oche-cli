@@ -21,6 +21,10 @@ export interface ResolvedConfig {
 
 type Env = Record<string, string | undefined>;
 
+/** Hosted Oche. `oche login <url>` or OCHE_URL points the CLI at a self-hosted server. */
+export const DEFAULT_SERVER_URL = "https://deploy.oche.io";
+export const DEFAULT_TOKEN_PAGE = "https://ship.oche.io/settings";
+
 export function configPath(env: Env = process.env): string {
   const base = env.XDG_CONFIG_HOME?.trim() || join(homedir(), ".config");
   return join(base, "oche", "config.json");

@@ -1,11 +1,11 @@
 # oche-cli
 
-`oche` from your terminal. It talks to your Oche server with a token you create in the dashboard under Settings → CLI tokens.
+`oche` from your terminal. It talks to your Oche server with a token you create in the dashboard under Settings → CLI tokens. Self-hosting? Run `oche login https://your-server` once.
 
 ```sh
-npm install && npm run build && npm link   # installs the `oche` command
+npm install -g oche-cli    # installs the `oche` command
 
-oche login https://deploy.oche.io
+oche login                  # paste a CLI token from ship.oche.io/settings
 oche ship                   # commit what's changed, push, then feature → dev → staging → main
 oche ship staging           # stop at staging
 oche ship prod --direct     # dev → main, then Oche syncs staging
