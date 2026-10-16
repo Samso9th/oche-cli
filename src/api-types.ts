@@ -256,4 +256,123 @@ export type ShipRunsResponse = { runs: ApiShipRun[] };
 export type CommitMessageRequest = { diff: string; stat: string; recent: string[]; branch?: string };
 export type CommitMessageResponse = { message: string };
 
+/* ---- Coolify (mirrors server/src/services/coolify.ts and server/src/coolify/*) ---- */
+
+export interface ApiCoolifyInstance {
+  id: number;
+  name: string;
+  url: string;
+  version: string | null;
+  lastCheckedAt: string | null;
+  lastError: string | null;
+  /** Blank for members: the URL carries a secret. */
+  webhookUrl: string;
+  cloudflareAccess: boolean;
+  /** Coolify's team webhook: pointing at Oche ("on"), unset ("off"), or used by something else ("other"). */
+  alerts: "on" | "off" | "other" | null;
+  appCount: number | null;
+  linkedRepos: number;
+}
+
+export interface ApiDeployment {
+  uuid: string;
+  /** queued | in_progress | finished | failed | cancelled-by-user */
+  status: string;
+  commit: string | null;
+  commitMessage: string | null;
+  createdAt: string;
+  updatedAt: string;
+  trigger: "webhook" | "api" | "manual";
+  forceRebuild: boolean;
+}
+
+export interface ApiCoolifyApp {
+  uuid: string;
+  name: string;
+  stage: Stage;
+  branch: string | null;
+  fqdn: string | null;
+  state: string;
+  health: string | null;
+  buildPack: string | null;
+  baseDirectory: string | null;
+  deployments: ApiDeployment[];
+  coolifyUrl: string;
+}
+
+/** GET /v1/repos/:owner/:repo/deployments */
+export interface RepoDeploymentsResponse {
+  instance: ApiCoolifyInstance | null;
+  apps: ApiCoolifyApp[];
+  otherBranches: { uuid: string; name: string; branch: string | null }[];
+  /** When nothing matched: apps building a repo with the same name under another owner. */
+  sameName: { uuid: string; name: string; repo: string | null; branch: string | null }[];
+}
+
+export interface LogLine {
+  output: string;
+  type: "stdout" | "stderr";
+  /** Coolify hides lines that can hold secrets. Never print them. */
+  hidden: boolean;
+  command?: string | null;
+  timestamp?: string | null;
+}
+
+/** GET /v1/repos/:owner/:repo/deployments/:app/:deployment */
+export interface DeploymentDetail {
+  deployment: ApiDeployment;
+  app: { uuid: string; name: string; stage: Stage; fqdn: string | null };
+  lines: LogLine[];
+  /** The errors and the tail, hidden lines left out. */
+  excerpt: string[];
+  report: string;
+}
+
+/** GET /v1/repos/:owner/:repo/apps/:app/logs?lines=200 — the running container's log. */
+export interface AppLogs {
+  app: { uuid: string; name: string; stage: Stage; fqdn: string | null; state: string; health: string | null };
+  lines: LogLine[];
+  excerpt: string[];
+}
+
+/** POST /v1/repos/:owner/:repo/deployments/:app/:deployment/explain (AI) */
+export type ExplainResponse = { explanation: string };
+
+/** POST /v1/repos/:owner/:repo/apps/:app/deploy  body: { force?: boolean } */
+export type DeployResponse = { deploymentUuid: string | null };
+
+/** GET /v1/repos/:owner/:repo/apps/:app/rollback. POST the same path with { commit }. */
+export interface RollbackOptions {
+  app: { uuid: string; name: string; stage: Stage };
+  current: string | null;
+  images: { tag: string; createdAt: string; isCurrent: boolean; commitMessage: string | null; deployedAt: string | null }[];
+}
+
+export type EnvIssue = "missing-in-prod" | "missing-in-staging" | "same-secret" | null;
+
+/** Names and whether two stages share a value. Values never leave the server. */
+export interface EnvRow {
+  key: string;
+  present: Partial<Record<Stage, boolean>>;
+  sameStagingProd: boolean;
+  issue: EnvIssue;
+}
+
+export interface EnvComparison {
+  label: string;
+  apps: Partial<Record<Stage, { uuid: string; name: string }>>;
+  rows: EnvRow[];
+  counts: { missingInProd: number; missingInStaging: number; sameSecret: number };
+}
+
+/** GET /v1/repos/:owner/:repo/envs */
+export type EnvsResponse = { groups: EnvComparison[] };
+
+/** GET /v1/repos/:owner/:repo/preflight?to=prod */
+export interface Preflight {
+  linked: boolean;
+  envIssues: { app: string; missing: string[]; shared: string[] }[];
+  below: { stage: Stage; apps: number; unhealthy: { name: string; status: string | null; state: string }[] } | null;
+}
+
 export type ApiError = { error: string };

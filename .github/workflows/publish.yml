@@ -8,7 +8,7 @@ on:
 
 permissions:
   contents: read
-  id-token: write # npm provenance now, Trusted Publishing later
+  id-token: write # npm Trusted Publishing + provenance
 
 jobs:
   publish:
@@ -35,9 +35,5 @@ jobs:
       - run: npm test
       - run: npm run build
 
-      # NPM_TOKEN is only for the first publish. Once Trusted Publishing is set
-      # up on npmjs.com, delete the secret and this env block; npm then signs in
-      # over OIDC.
+      # Signs in over OIDC (npm Trusted Publishing); no stored token.
       - run: npm publish
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
