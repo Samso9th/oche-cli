@@ -3,6 +3,15 @@ import pkg from "../package.json" with { type: "json" };
 import { Client } from "./api.ts";
 import type { ApiEvent, ApiRepo, Branches, EventType, Mode, RepoResponse } from "./api-types.ts";
 import {
+  deployCommand,
+  deploymentsCommand,
+  envsCommand,
+  explainCommand,
+  logsCommand,
+  preflightCommand,
+  rollbackCommand,
+} from "./coolify.ts";
+import {
   configPath,
   DEFAULT_SERVER_URL,
   DEFAULT_TOKEN_PAGE,
@@ -452,6 +461,83 @@ export function buildProgram(): Command {
     .argument(repoArg, repoHelp)
     .option("--approvals <n>", "approvals required in strict mode", nonNegativeInt)
     .action(setMode);
+
+  /* ---- Coolify ---- */
+
+  const stageOption = (description: string) => new Option("--stage <stage>", description).choices(["prod", "staging", "dev"]);
+  const appOption = new Option("--app <name>", "which Coolify app (its name, or the start of its uuid)");
+
+  program
+    .command("logs")
+    .description("Container logs for an app, or a deployment's build log with --build")
+    .argument(repoArg, repoHelp)
+    .addOption(appOption)
+    .addOption(stageOption("the app deploying this stage"))
+    .option("--deployment <uuid>", "build log of this deployment (implies --build; default: the latest)")
+    .option("--build", "the build log of the latest deployment, not the running container")
+    .addOption(new Option("-n, --lines <n>", "how many lines from the end; 0 for all").default(200).argParser(nonNegativeInt))
+    .option("--failures", "only the errors and the tail")
+    .option("--json", "print raw JSON")
+    .action((repo, opts) => logsCommand(client, repo, opts));
+
+  program
+    .command("deployments")
+    .description("Recent deployments per app, with status, commit and how long each took")
+    .argument(repoArg, repoHelp)
+    .addOption(appOption)
+    .addOption(stageOption("only apps deploying this stage"))
+    .addOption(new Option("-n, --limit <n>", "deployments per app").default(5).argParser(positiveInt))
+    .option("--json", "print raw JSON")
+    .action((repo, opts) => deploymentsCommand(client, repo, opts));
+
+  program
+    .command("envs")
+    .description("Which stages define each environment variable (names only, never values)")
+    .argument(repoArg, repoHelp)
+    .addOption(stageOption("only this stage's column"))
+    .option("--key <name>", "only variables whose name contains this")
+    .option("--json", "print raw JSON")
+    .action((repo, opts) => envsCommand(client, repo, opts));
+
+  program
+    .command("deploy")
+    .description("Redeploy an app on Coolify")
+    .argument(repoArg, repoHelp)
+    .addOption(appOption)
+    .addOption(stageOption("the app deploying this stage"))
+    .option("--force", "rebuild without the build cache")
+    .option("-y, --yes", "don't ask for confirmation")
+    .option("--json", "print raw JSON")
+    .action((repo, opts) => deployCommand(client, repo, opts));
+
+  program
+    .command("rollback")
+    .description("List the images Coolify can roll an app back to, and roll back to one")
+    .argument(repoArg, repoHelp)
+    .addOption(appOption)
+    .addOption(stageOption("the app deploying this stage"))
+    .option("--to <commit>", "roll back to this image (a commit SHA from the list)")
+    .option("-y, --yes", "don't ask for confirmation")
+    .option("--json", "print raw JSON")
+    .action((repo, opts) => rollbackCommand(client, repo, opts));
+
+  program
+    .command("explain")
+    .description("Ask your Oche server's AI what broke a deployment")
+    .argument(repoArg, repoHelp)
+    .addOption(appOption)
+    .addOption(stageOption("the app deploying this stage"))
+    .option("--deployment <uuid>", "explain this deployment (default: the latest failed one)")
+    .option("--json", "print raw JSON")
+    .action((repo, opts) => explainCommand(client, repo, opts));
+
+  program
+    .command("preflight")
+    .description("What to know before promoting: missing variables and the health of the stage below")
+    .argument(repoArg, repoHelp)
+    .addOption(new Option("--to <stage>", "the stage being promoted into").choices(["prod", "staging"]).default("prod"))
+    .option("--json", "print raw JSON")
+    .action((repo, opts) => preflightCommand(client, repo, opts));
 
   program
     .command("log")
