@@ -45,6 +45,18 @@ export function relativeTime(iso: string | null | undefined, now = Date.now()): 
   return new Date(then).toISOString().slice(0, 10);
 }
 
+/** How long something took: "48s", "2m 11s", "1h 4m". Empty when either end is missing. */
+export function duration(from: string | null | undefined, to: string | null | undefined): string {
+  if (!from || !to) return "";
+  const ms = Date.parse(to) - Date.parse(from);
+  if (Number.isNaN(ms) || ms < 0) return "";
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ${s % 60}s`;
+  return `${Math.floor(m / 60)}h ${m % 60}m`;
+}
+
 export function truncate(s: string, max: number): string {
   return s.length <= max ? s : `${s.slice(0, max - 1)}…`;
 }

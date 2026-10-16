@@ -1,6 +1,14 @@
 import type {
+  AppLogs,
   CommitMessageRequest,
   CommitMessageResponse,
+  DeploymentDetail,
+  DeployResponse,
+  EnvsResponse,
+  ExplainResponse,
+  Preflight,
+  RepoDeploymentsResponse,
+  RollbackOptions,
   ShipRequest,
   ShipResponse,
   ShipRunResponse,
@@ -73,6 +81,48 @@ export class Client {
   /** The server writes it with the model it's configured for, so the CLI needs no AI key. */
   commitMessage(body: CommitMessageRequest) {
     return this.request<CommitMessageResponse>("POST", "/v1/ai/commit-message", body, 90_000);
+  }
+
+  /* ---- Coolify ---- */
+
+  deployments(r: RepoSlug) {
+    return this.request<RepoDeploymentsResponse>("GET", `${repoPath(r)}/deployments`);
+  }
+
+  /** One deployment with its build log, the failure excerpt and a pasteable report. */
+  deployment(r: RepoSlug, app: string, deployment: string) {
+    return this.request<DeploymentDetail>("GET", `${repoPath(r)}/deployments/${encodeURIComponent(app)}/${encodeURIComponent(deployment)}`);
+  }
+
+  /** The running container's log, not the build log. */
+  appLogs(r: RepoSlug, app: string, lines: number) {
+    return this.request<AppLogs>("GET", `${repoPath(r)}/apps/${encodeURIComponent(app)}/logs?lines=${lines}`);
+  }
+
+  /** The server asks its AI model what broke, so the CLI needs no AI key. */
+  explainDeployment(r: RepoSlug, app: string, deployment: string) {
+    const path = `${repoPath(r)}/deployments/${encodeURIComponent(app)}/${encodeURIComponent(deployment)}/explain`;
+    return this.request<ExplainResponse>("POST", path, undefined, 120_000);
+  }
+
+  deploy(r: RepoSlug, app: string, force: boolean) {
+    return this.request<DeployResponse>("POST", `${repoPath(r)}/apps/${encodeURIComponent(app)}/deploy`, { force });
+  }
+
+  rollbackOptions(r: RepoSlug, app: string) {
+    return this.request<RollbackOptions>("GET", `${repoPath(r)}/apps/${encodeURIComponent(app)}/rollback`);
+  }
+
+  rollback(r: RepoSlug, app: string, commit: string) {
+    return this.request<DeployResponse>("POST", `${repoPath(r)}/apps/${encodeURIComponent(app)}/rollback`, { commit });
+  }
+
+  envs(r: RepoSlug) {
+    return this.request<EnvsResponse>("GET", `${repoPath(r)}/envs`);
+  }
+
+  preflight(r: RepoSlug, to: "staging" | "prod") {
+    return this.request<Preflight>("GET", `${repoPath(r)}/preflight?to=${to}`);
   }
 
   events(repo: RepoSlug | null, limit: number) {
