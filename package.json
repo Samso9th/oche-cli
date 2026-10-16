@@ -1,7 +1,7 @@
 {
   "name": "oche-cli",
-  "version": "0.1.0",
-  "description": "Command-line client for Oche: promote dev → staging \u2192 main from your terminal.",
+  "version": "0.1.1",
+  "description": "Command-line client for Oche: promote dev → staging → main from your terminal.",
   "license": "MIT",
   "repository": {
     "type": "git",
