@@ -125,6 +125,14 @@ export async function logsCommand(getClient: GetClient, repoArg: string | undefi
   if (opts.json) return printJson({ ...detail, lines });
   const d = detail.deployment;
   note(`${appLabel(app)} · build log · ${d.status} · ${d.commit?.slice(0, 7) ?? "?"} · ${relativeTime(d.updatedAt)} · ${deploymentUuid}`);
+  // Say so rather than printing a header and nothing. An empty build log is
+  // usually Coolify holding it back from a token without read:sensitive, or a
+  // deployment old enough to have been pruned, and silence reads as "no
+  // problem found" when neither is true.
+  if (!lines.length) {
+    note("Coolify returned no build log for this deployment. Check the Coolify API token has read:sensitive, or try a more recent deployment.");
+    return;
+  }
   // A build log arrives whole, so the tail is taken here; 0 keeps all of it.
   printLines(opts.failures ? detail.excerpt : lines.map((l) => l.output), opts.failures ? 0 : opts.lines);
 }
