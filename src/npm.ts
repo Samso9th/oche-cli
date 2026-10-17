@@ -37,6 +37,28 @@ async function npmOut(bin: string[], args: string[]): Promise<string | null> {
   }
 }
 
+/**
+ * Some npm reads (like the trust list) need a fresh 2FA session. Run it quietly
+ * first; if that fails, again with the terminal attached so npm can ask, while
+ * still capturing stdout.
+ */
+async function npmRead(bin: string[], args: string[]): Promise<string | null> {
+  const quiet = await npmOut(bin, args);
+  if (quiet !== null) return quiet;
+  closeReader();
+  return new Promise((resolve) => {
+    const child = spawn(bin[0]!, [...bin.slice(1), ...args], { stdio: ["inherit", "pipe", "inherit"] });
+    let out = "";
+    child.stdout.on("data", (d: Buffer) => {
+      out += d.toString();
+      // Show npm's own prompts (the 2FA link) but not the JSON we parse.
+      for (const line of d.toString().split("\n")) if (/https?:\/\/|ENTER/.test(line)) process.stderr.write(`${line}\n`);
+    });
+    child.on("error", () => resolve(null));
+    child.on("exit", (code) => resolve(code === 0 ? out : null));
+  });
+}
+
 /** Runs npm attached to the terminal, so its own 2FA and login prompts work. */
 function npmLive(bin: string[], args: string[]): Promise<void> {
   closeReader();
@@ -192,7 +214,9 @@ export async function npmSetupCommand(
   }
 
   // 4. Tell npm to trust the workflow (OIDC). This is the step that needs your npm account.
-  const trust = parseTrustList((await npmOut(bin, ["trust", "list", name, "--json"])) ?? "");
+  const listed = await npmRead(bin, ["trust", "list", name, "--json"]);
+  if (listed === null) throw new CliError(`Couldn't read npm's trusted publishers for ${name}. Run \`npm trust list ${name}\` to see why.`);
+  const trust = parseTrustList(listed);
   const sameRepo = (t: TrustEntry) => t.type === "github" && t.repository?.toLowerCase() === slug(repo).toLowerCase();
   if (trust.some((t) => sameRepo(t) && t.file === WORKFLOW_FILE)) {
     ok(`npm already trusts ${WORKFLOW_FILE} in ${slug(repo)}`);
