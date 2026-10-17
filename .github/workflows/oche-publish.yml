@@ -1,0 +1,259 @@
+# Managed by Oche (template v1).
+# Publishes this package to npm on every push to main. The version
+# comes from your commits: feat → minor, fix and the rest → patch, a breaking
+# change (! or BREAKING CHANGE) → major. Bump package.json above the npm
+# version to choose one yourself.
+name: Oche publish
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+
+permissions:
+  contents: write # push the release tag
+  id-token: write # npm Trusted Publishing
+
+concurrency:
+  group: oche-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+
+      # Trusted Publishing needs npm 11.5.1 or newer.
+      - run: npm install -g npm@latest
+
+      - name: Decide the version
+        id: release
+        env:
+          OCHE_REGISTRY: "https://registry.npmjs.org"
+          OCHE_DEFAULT_BUMP: patch
+        run: |
+          cat > "$RUNNER_TEMP/oche-release.ts" <<'OCHE_RELEASE_SCRIPT'
+          /**
+           * Decides what an Oche publish run releases. This file is copied verbatim into
+           * each repo's .github/workflows/oche-publish.yml and run there with Node 24, so
+           * it must stay self-contained: no imports beyond node: builtins, and only
+           * erasable TypeScript (Node strips the types).
+           *
+           * Rules:
+           * - package.json bumped by hand above npm's latest → publish that version.
+           * - Otherwise bump from the conventional commits since the last v* tag:
+           *   breaking (`!` or BREAKING CHANGE) → major, feat → minor, anything else →
+           *   the default bump. Before 1.0.0 a breaking change bumps minor.
+           * - Nothing new since the last release → publish nothing.
+           */
+          import { execFileSync } from "node:child_process";
+          import { appendFileSync, readFileSync } from "node:fs";
+          import { pathToFileURL } from "node:url";
+
+          export type Bump = "major" | "minor" | "patch";
+
+          export interface ReleaseInput {
+            pkg: { name?: string; version?: string; private?: boolean };
+            /** Versions already on npm. null when the package has never been published. */
+            published: string[] | null;
+            latest: string | null;
+            /** Newest v* tag in history, without the "v". */
+            lastTag: string | null;
+            /** Commit messages since the last release, newest first. null when the range is unknown. */
+            commits: string[] | null;
+            /** HEAD already carries a release tag (a re-run). */
+            headTagged: boolean;
+            defaultBump: "patch" | "minor";
+          }
+
+          export type ReleaseDecision =
+            | { publish: true; version: string; distTag: string; reason: string }
+            | { publish: false; reason: string };
+
+          /* ---------- semver, just enough of it ---------- */
+
+          interface Version {
+            major: number;
+            minor: number;
+            patch: number;
+            pre: string;
+          }
+
+          export function parseVersion(v: string): Version | null {
+            const m = /^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/.exec(v.trim());
+            if (!m) return null;
+            return { major: Number(m[1]), minor: Number(m[2]), patch: Number(m[3]), pre: m[4] ?? "" };
+          }
+
+          export function compareVersions(a: string, b: string): number {
+            const x = parseVersion(a);
+            const y = parseVersion(b);
+            if (!x || !y) return 0;
+            for (const k of ["major", "minor", "patch"] as const) if (x[k] !== y[k]) return x[k] - y[k];
+            if (x.pre === y.pre) return 0;
+            if (!x.pre) return 1; // 1.0.0 > 1.0.0-beta
+            if (!y.pre) return -1;
+            return x.pre < y.pre ? -1 : 1;
+          }
+
+          export function bumpVersion(v: string, bump: Bump): string {
+            const p = parseVersion(v);
+            if (!p) throw new Error(`"${v}" isn't a semver version.`);
+            if (bump === "major") return `${p.major + 1}.0.0`;
+            if (bump === "minor") return `${p.major}.${p.minor + 1}.0`;
+            // 1.2.3-beta.1 + patch → 1.2.3: the prerelease graduates.
+            return p.pre ? `${p.major}.${p.minor}.${p.patch}` : `${p.major}.${p.minor}.${p.patch + 1}`;
+          }
+
+          /* ---------- conventional commits ---------- */
+
+          const HEADER = /^(\w+)(\([^)]*\))?(!)?:\s/;
+
+          export function bumpFor(messages: string[], fallback: "patch" | "minor"): Bump {
+            let bump: Bump = fallback;
+            let sawConventional = false;
+            for (const msg of messages) {
+              const header = msg.split("\n")[0] ?? "";
+              const m = HEADER.exec(header);
+              if (m?.[3] || /^BREAKING[ -]CHANGE:/m.test(msg)) return "major";
+              if (!m) continue;
+              if (!sawConventional) {
+                // Conventional history: fix/chore/docs are patches, whatever the default says.
+                sawConventional = true;
+                bump = "patch";
+              }
+              if (m[1]!.toLowerCase() === "feat") bump = "minor";
+            }
+            return bump;
+          }
+
+          const maxVersion = (...vs: (string | null)[]) =>
+            vs.filter((v): v is string => Boolean(v && parseVersion(v))).sort(compareVersions).at(-1) ?? null;
+
+          export function decideRelease(input: ReleaseInput): ReleaseDecision {
+            const { pkg } = input;
+            if (pkg.private) return { publish: false, reason: "package.json is private." };
+            if (!pkg.name) return { publish: false, reason: "package.json has no name." };
+            if (!pkg.version || !parseVersion(pkg.version)) throw new Error(`package.json version "${pkg.version ?? ""}" isn't semver.`);
+            if (input.published === null) {
+              throw new Error(`${pkg.name} isn't on npm yet. Publish the first version by hand, then run \`oche npm setup\`.`);
+            }
+            const published = new Set(input.published);
+            const distTag = (v: string) => (parseVersion(v)!.pre ? "next" : "latest");
+
+            // A hand bump wins.
+            if (!published.has(pkg.version) && (!input.latest || compareVersions(pkg.version, input.latest) > 0)) {
+              return { publish: true, version: pkg.version, distTag: distTag(pkg.version), reason: `package.json says ${pkg.version}.` };
+            }
+
+            if (input.headTagged) return { publish: false, reason: "This commit is already released." };
+            if (input.commits && input.commits.length === 0) return { publish: false, reason: "Nothing new since the last release." };
+
+            const base = maxVersion(input.lastTag, input.latest, pkg.version)!;
+            let bump = bumpFor(input.commits ?? [], input.defaultBump);
+            if (bump === "major" && parseVersion(base)!.major === 0) bump = "minor";
+            const version = bumpVersion(base, bump);
+            if (published.has(version)) throw new Error(`${pkg.name}@${version} is already on npm. Bump package.json past it.`);
+            return { publish: true, version, distTag: distTag(version), reason: `${bump} bump from ${base}.` };
+          }
+
+          /* ---------- running in GitHub Actions ---------- */
+
+          const git = (...args: string[]) => {
+            try {
+              return execFileSync("git", args, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+            } catch {
+              return null;
+            }
+          };
+
+          async function main() {
+            const pkg = JSON.parse(readFileSync("package.json", "utf8")) as ReleaseInput["pkg"];
+            const registry = (process.env.OCHE_REGISTRY ?? "https://registry.npmjs.org").replace(/\/$/, "");
+            const defaultBump = process.env.OCHE_DEFAULT_BUMP === "minor" ? "minor" : "patch";
+
+            let published: string[] | null = [];
+            let latest: string | null = null;
+            let gitHead: string | null = null;
+            if (pkg.name && !pkg.private) {
+              const res = await fetch(`${registry}/${encodeURIComponent(pkg.name).replace(/^%40/, "@")}`, { headers: { accept: "application/json" } });
+              if (res.status === 404) published = null;
+              else if (!res.ok) throw new Error(`npm registry answered ${res.status} for ${pkg.name}.`);
+              else {
+                const doc = (await res.json()) as { versions?: Record<string, { gitHead?: string }>; "dist-tags"?: Record<string, string> };
+                published = Object.keys(doc.versions ?? {});
+                latest = doc["dist-tags"]?.latest ?? null;
+                gitHead = (latest && doc.versions?.[latest]?.gitHead) || null;
+              }
+            }
+
+            const tag = git("describe", "--tags", "--abbrev=0", "--match", "v[0-9]*.[0-9]*.[0-9]*");
+            const headTagged = (git("tag", "--points-at", "HEAD") ?? "").split("\n").some((t) => /^v\d+\.\d+\.\d+/.test(t));
+            // Commits since the last release: the last tag, else the commit npm's latest was built from.
+            const since = tag ?? (gitHead && git("cat-file", "-e", `${gitHead}^{commit}`) !== null ? gitHead : null);
+            const commits = since
+              ? (git("log", `${since}..HEAD`, "--no-merges", "--format=%B%x00") ?? "")
+                  .split("\0")
+                  .map((s) => s.trim())
+                  .filter(Boolean)
+              : null;
+
+            const decision = decideRelease({ pkg, published, latest, lastTag: tag ? tag.slice(1) : null, commits, headTagged, defaultBump });
+            console.log(decision.publish ? `Releasing ${pkg.name}@${decision.version}: ${decision.reason}` : `Not releasing: ${decision.reason}`);
+
+            const out = process.env.GITHUB_OUTPUT;
+            if (out) {
+              appendFileSync(out, `publish=${decision.publish}\n`);
+              if (decision.publish) appendFileSync(out, `version=${decision.version}\ndist_tag=${decision.distTag}\n`);
+            }
+            const summary = process.env.GITHUB_STEP_SUMMARY;
+            if (summary) {
+              appendFileSync(summary, decision.publish ? `### ${pkg.name}@${decision.version}\n${decision.reason}\n` : `### No release\n${decision.reason}\n`);
+            }
+          }
+
+          if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+            main().catch((e: Error) => {
+              console.error(`::error::${e.message}`);
+              process.exit(1);
+            });
+          }
+          OCHE_RELEASE_SCRIPT
+          node "$RUNNER_TEMP/oche-release.ts"
+
+      - name: Install
+        if: steps.release.outputs.publish == 'true'
+        run: npm ci
+
+      - name: Set version
+        if: steps.release.outputs.publish == 'true'
+        run: npm version "${{ steps.release.outputs.version }}" --no-git-tag-version --allow-same-version
+
+      - name: Build
+        if: steps.release.outputs.publish == 'true'
+        run: npm run build --if-present
+
+      - name: Test
+        if: steps.release.outputs.publish == 'true'
+        run: npm test
+
+      # Signs in to npm over OIDC (Trusted Publishing). No stored token.
+      - name: Publish
+        if: steps.release.outputs.publish == 'true'
+        run: npm publish --access public --tag "${{ steps.release.outputs.dist_tag }}"
+
+      # The version lives in tags, never in a commit, so branches don't drift.
+      - name: Tag
+        if: steps.release.outputs.publish == 'true'
+        run: |
+          git tag "v${{ steps.release.outputs.version }}" "$GITHUB_SHA"
+          git push origin "v${{ steps.release.outputs.version }}"
