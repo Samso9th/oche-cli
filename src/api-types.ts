@@ -56,7 +56,12 @@ export type EventType =
   | "deploy-failed"
   | "deploy-triggered"
   | "app-stopped"
-  | "coolify-setup";
+  | "coolify-setup"
+  | "rolled-back"
+  | "settings-changed"
+  | "published"
+  | "publish-failed"
+  | "publish-setup";
 
 export interface OcheEvent {
   type: EventType;
@@ -149,6 +154,16 @@ export interface ApiRepo {
   /** Production waits for staging to deploy healthy on Coolify. */
   gateOnStaging: boolean;
   coolifyLinked: boolean;
+  /** npm publishing, when it's set up. */
+  npm: ApiRepoNpm | null;
+}
+
+export interface ApiRepoNpm {
+  packageName: string;
+  enabled: boolean;
+  lastVersion: string | null;
+  /** The last publish run failed. */
+  failing: boolean;
 }
 
 export type WorkMergeMethod = "merge" | "squash" | "rebase";
@@ -160,6 +175,8 @@ export interface ApiEvent {
   summary: string;
   actor: string | null;
   prNumber: number | null;
+  /** Where to look: the Actions run, the npm page. */
+  url: string | null;
   createdAt: string;
 }
 
@@ -376,3 +393,67 @@ export interface Preflight {
 }
 
 export type ApiError = { error: string };
+
+/* ---- npm publishing (from api.ts) -------------------------------- */
+
+export type NpmLockfile = "npm" | "pnpm" | "yarn" | "yarn-berry" | "none";
+
+export interface NpmStep {
+  id: "permissions" | "workflow" | "on-prod" | "trust" | "published";
+  label: string;
+  done: boolean;
+  hint?: string;
+}
+
+/** GET /v1/repos/:owner/:repo/npm */
+export interface NpmStatusResponse {
+  detected: {
+    found: boolean;
+    name: string | null;
+    version: string | null;
+    private: boolean;
+    workspaces: boolean;
+    lockfile: NpmLockfile;
+    hasTests: boolean;
+    otherPublishers: string[];
+  };
+  /** Why Oche can't publish this repo, if it can't. */
+  blocked: string | null;
+  registry: { exists: boolean; latest: string | null; publishedAt: string | null; url: string } | null;
+  publishing: {
+    packageName: string;
+    enabled: boolean;
+    runTests: boolean;
+    trustedAt: string | null;
+    trustedBy: string | null;
+    setupPr: { number: number; url: string } | null;
+    lastRun: { url: string; conclusion: string; at: string; failedStep: string | null } | null;
+    lastVersion: string | null;
+    lastPublishedAt: string | null;
+    /** The workflow on the dev branch differs from what Oche would write now. */
+    outdated: boolean;
+  } | null;
+  workflowOnProd: boolean;
+  permissions: { ok: boolean; missing: string[]; fixUrl: string | null };
+  /** The command to run locally so npm trusts the workflow. */
+  trustCommand: string | null;
+  steps: NpmStep[];
+}
+
+/** POST /v1/repos/:owner/:repo/npm  { dryRun?, force? } → the workflow and, unless dry, the PR. */
+export type NpmSetupRequest = { dryRun?: boolean; force?: boolean };
+export interface NpmSetupResponse {
+  workflow: string;
+  path: string;
+  branch: string;
+  pr: { number: number; url: string; merged: boolean } | null;
+}
+
+/** PATCH /v1/repos/:owner/:repo/npm */
+export type NpmUpdateRequest = { enabled?: boolean; runTests?: boolean };
+
+/** POST /v1/repos/:owner/:repo/npm/trust, sent by `oche npm setup` once `npm trust` succeeded. */
+export type NpmTrustRequest = { packageName: string; npmUser: string };
+
+/** DELETE /v1/repos/:owner/:repo/npm?removeWorkflow=1 → the PR that removes the workflow, if asked. */
+export type NpmRemoveResponse = { pr: { number: number; url: string } | null };

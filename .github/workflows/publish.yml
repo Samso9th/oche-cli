@@ -1,6 +1,5 @@
-# Stages oche-cli on npm when a version tag (v0.1.0, v0.2.0, ...) is pushed.
-# The tag must match "version" in package.json. Approve the staged version
-# with 2FA at npmjs.com → Staged Packages (or `npm stage approve <id>`).
+# Publishes oche-cli to npm when a version tag (v0.1.0, v0.2.0, ...) is pushed.
+# The tag must match "version" in package.json.
 name: Publish
 
 on:
@@ -37,9 +36,5 @@ jobs:
       - run: npm test
       - run: npm run build
 
-      # `npm stage` needs npm 12.
-      - run: npm install -g npm@12
-
-      # Signs in over OIDC (npm Trusted Publishing); no stored token. The
-      # Trusted Publisher only allows staging, so a human approves each release.
-      - run: npm stage publish
+      # Signs in over OIDC (npm Trusted Publishing); no stored token.
+      - run: npm publish

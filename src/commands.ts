@@ -25,6 +25,7 @@ import { ApiRequestError, CliError } from "./errors.ts";
 import { resolveRepo, slug, type RepoSlug } from "./git.ts";
 import { needsConfirmation, promotionRefs, toPromotion } from "./promotion.ts";
 import { DEFAULT_MODEL, loadLocalConfig, localConfigPath, saveLocalConfig } from "./local-config.ts";
+import { npmSetupCommand, npmStatusCommand } from "./npm.ts";
 import { prCommand } from "./pr.ts";
 import { commitCommand, shipCommand } from "./ship.ts";
 import {
@@ -74,8 +75,8 @@ function nonNegativeInt(value: string): number {
 const modeLabel = (repo: Pick<ApiRepo, "mode" | "requiredApprovals">) =>
   repo.mode === "strict" ? `strict · ${plural(repo.requiredApprovals, "approval")}` : "fast";
 
-const BAD_EVENTS = new Set<EventType>(["promotion-conflict", "sync-conflict", "pr-blocked", "direct-push", "deploy-failed", "app-stopped"]);
-const GOOD_EVENTS = new Set<EventType>(["promoted", "synced", "onboarded", "deploy-succeeded"]);
+const BAD_EVENTS = new Set<EventType>(["promotion-conflict", "sync-conflict", "pr-blocked", "direct-push", "deploy-failed", "app-stopped", "publish-failed"]);
+const GOOD_EVENTS = new Set<EventType>(["promoted", "synced", "onboarded", "deploy-succeeded", "published"]);
 
 const newestFirst = (events: ApiEvent[]) =>
   [...events].sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id - a.id);
@@ -489,6 +490,22 @@ export function buildProgram(): Command {
     .addOption(new Option("-n, --limit <n>", "deployments per app").default(5).argParser(positiveInt))
     .option("--json", "print raw JSON")
     .action((repo, opts) => deploymentsCommand(client, repo, opts));
+
+  const npm = program.command("npm").description("Publish this package to npm on every release");
+  npm
+    .command("setup")
+    .description("Add the publish workflow and let npm trust it (uses your npm login)")
+    .argument(repoArg, repoHelp)
+    .option("-y, --yes", "don't ask for confirmation")
+    .option("--force", "set up even if another workflow already publishes to npm")
+    .option("--skip-pr", "only do the npm side; don't open the workflow PR")
+    .action((repo, opts) => npmSetupCommand(client, repo, opts));
+  npm
+    .command("status", { isDefault: true })
+    .description("Publishing setup, the npm version and the last run")
+    .argument(repoArg, repoHelp)
+    .option("--json", "print raw JSON")
+    .action((repo, opts) => npmStatusCommand(client, repo, opts));
 
   program
     .command("envs")

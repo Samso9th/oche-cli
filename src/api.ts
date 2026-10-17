@@ -15,6 +15,10 @@ import type {
   ApiError,
   EventsResponse,
   MeResponse,
+  NpmSetupRequest,
+  NpmSetupResponse,
+  NpmStatusResponse,
+  NpmTrustRequest,
   OnboardRequest,
   OnboardResponse,
   PromoteRequest,
@@ -123,6 +127,22 @@ export class Client {
 
   preflight(r: RepoSlug, to: "staging" | "prod") {
     return this.request<Preflight>("GET", `${repoPath(r)}/preflight?to=${to}`);
+  }
+
+  /* ---- npm publishing ---- */
+
+  npmStatus(r: RepoSlug) {
+    return this.request<NpmStatusResponse>("GET", `${repoPath(r)}/npm`);
+  }
+
+  /** Opens (or updates) the PR that adds the publish workflow. */
+  npmSetup(r: RepoSlug, body: NpmSetupRequest) {
+    return this.request<NpmSetupResponse>("POST", `${repoPath(r)}/npm`, body);
+  }
+
+  /** Records that npm now trusts the workflow; npm has no API the server could check. */
+  npmTrust(r: RepoSlug, body: NpmTrustRequest) {
+    return this.request<NpmStatusResponse>("POST", `${repoPath(r)}/npm/trust`, body);
   }
 
   events(repo: RepoSlug | null, limit: number) {
