@@ -55,6 +55,48 @@ async function localPackage(): Promise<{ name?: string; version?: string } | nul
   }
 }
 
+export interface TrustEntry {
+  id: string;
+  type?: string;
+  file?: string;
+  repository?: string;
+}
+
+/** `npm trust list --json` prints one JSON object per trust, back to back, not an array. */
+export function parseTrustList(out: string): TrustEntry[] {
+  const entries: TrustEntry[] = [];
+  let depth = 0;
+  let start = -1;
+  let inString = false;
+  for (let i = 0; i < out.length; i++) {
+    const ch = out[i];
+    if (inString) {
+      if (ch === "\\") i++;
+      else if (ch === '"') inString = false;
+    } else if (ch === '"') inString = true;
+    else if (ch === "{") {
+      if (depth++ === 0) start = i;
+    } else if (ch === "}" && --depth === 0) {
+      try {
+        const v = JSON.parse(out.slice(start, i + 1)) as TrustEntry;
+        if (typeof v.id === "string") entries.push(v);
+      } catch {
+        // not ours; skip
+      }
+    }
+  }
+  // A future npm may print a plain array instead.
+  if (!entries.length) {
+    try {
+      const v = JSON.parse(out) as unknown;
+      if (Array.isArray(v)) return v.filter((e): e is TrustEntry => typeof (e as TrustEntry)?.id === "string");
+    } catch {
+      // empty or not JSON
+    }
+  }
+  return entries;
+}
+
 function printSteps(st: NpmStatusResponse) {
   for (const s of st.steps) {
     print(`  ${s.done ? c.green("✓") : c.dim("○")} ${s.label}${!s.done && s.hint ? c.dim(`  ${s.hint}`) : ""}`);
@@ -150,19 +192,28 @@ export async function npmSetupCommand(
   }
 
   // 4. Tell npm to trust the workflow (OIDC). This is the step that needs your npm account.
-  const trusted = await npmOut(bin, ["trust", "list", name, "--json"]);
-  const already = Boolean(trusted && trusted.includes(`${repo.owner}/${repo.repo}`) && trusted.includes(WORKFLOW_FILE));
-  if (already) {
+  const trust = parseTrustList((await npmOut(bin, ["trust", "list", name, "--json"])) ?? "");
+  const sameRepo = (t: TrustEntry) => t.type === "github" && t.repository?.toLowerCase() === slug(repo).toLowerCase();
+  if (trust.some((t) => sameRepo(t) && t.file === WORKFLOW_FILE)) {
     ok(`npm already trusts ${WORKFLOW_FILE} in ${slug(repo)}`);
   } else {
-    // "publish.yml" is also the tail of "oche-publish.yml", so match the whole file name.
-    const old = others.find((f) => trusted && new RegExp(`(^|[^\\w.-])${f.replace(/\./g, "\\.")}`).test(trusted));
-    if (old) print(`\nnpm trusts ${old} to publish ${name} today. This points it at ${WORKFLOW_FILE} instead.`);
     print(`\nnpm will trust ${c.bold(`${slug(repo)} → .github/workflows/${WORKFLOW_FILE}`)} to publish ${name}. npm may ask for 2FA.`);
     if (!(await ask("Continue?"))) throw new CliError("Stopped before changing npm's trust settings.");
     await npmLive(bin, ["trust", "github", name, "--file", WORKFLOW_FILE, "--repository", slug(repo), "--allow-publish", ...(opts.yes ? ["--yes"] : [])]);
     ok("npm trusts the workflow");
   }
+
+  // npm adds trust, it never replaces it. Anything else this repo was trusted for can go.
+  for (const t of trust.filter((t) => sameRepo(t) && t.file !== WORKFLOW_FILE)) {
+    print(`\nnpm still trusts ${c.bold(t.file ?? "another workflow")} in ${slug(repo)} to publish ${name}.${others.includes(t.file ?? "") ? " Oche's PR removes that file." : ""}`);
+    if (await ask(`Revoke it? Only ${WORKFLOW_FILE} will be able to publish.`)) {
+      await npmLive(bin, ["trust", "revoke", name, `--id=${t.id}`]);
+      ok(`Revoked ${t.file}`);
+    } else {
+      print(c.dim(`Kept. Revoke it later with: npm trust revoke ${name} --id=${t.id}`));
+    }
+  }
+
   st = await api.npmTrust(repo, { packageName: name, npmUser });
 
   print();
