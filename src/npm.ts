@@ -89,7 +89,7 @@ export async function npmStatusCommand(client: GetClient, repoArg: string | unde
 export async function npmSetupCommand(
   client: GetClient,
   repoArg: string | undefined,
-  opts: { yes?: boolean; force?: boolean; skipPr?: boolean },
+  opts: { yes?: boolean; keepExisting?: boolean; skipPr?: boolean },
 ) {
   const repo = await resolveRepo(repoArg);
   const api = await client();
@@ -101,10 +101,13 @@ export async function npmSetupCommand(
   const ask = async (q: string) => opts.yes || (isInteractive() && (await confirm(q, true)));
 
   print(`Setting up npm publishing for ${c.bold(name)} from ${c.bold(slug(repo))}.\n`);
-  if (st.detected.otherPublishers.length && !st.publishing) {
-    warn(`${st.detected.otherPublishers.join(", ")} already publishes to npm. Two publishers will race each other.`);
-    if (!opts.force && !(await ask("Add Oche's workflow anyway?"))) throw new CliError("Stopped. Remove the other workflow, or pass --force.");
-    opts.force = true;
+  // Another workflow already publishes: the PR replaces it unless told to keep both.
+  const others = st.detected.otherPublishers;
+  let replace = false;
+  if (others.length) {
+    print(`${others.join(", ")} already publishes ${name}.`);
+    replace = !opts.keepExisting && (await ask(`Replace it with Oche's workflow? The PR deletes ${others.join(", ")}.`));
+    if (!replace && !opts.keepExisting) throw new CliError("Stopped. Run again and replace it, or pass --keep-existing to run both.");
   }
 
   // 1. Your npm login. The server never holds npm credentials.
@@ -134,10 +137,11 @@ export async function npmSetupCommand(
   }
 
   // 3. The workflow, through a PR into dev.
-  if (!opts.skipPr && (!st.publishing || st.publishing.outdated)) {
+  if (!opts.skipPr && (!st.publishing || st.publishing.outdated || replace)) {
     try {
-      const res = await api.npmSetup(repo, { force: opts.force });
-      if (res.pr) ok(`${res.pr.merged ? "Merged" : "Opened"} #${res.pr.number}: ${res.path}  ${c.dim(res.pr.url)}`);
+      const res = await api.npmSetup(repo, replace ? { replace: true } : others.length ? { force: true } : {});
+      const what = [res.path, ...res.removes.map((p) => `removes ${p}`)].join(", ");
+      if (res.pr) ok(`${res.pr.merged ? "Merged" : "Opened"} #${res.pr.number}: ${what}  ${c.dim(res.pr.url)}`);
       else ok(`${res.path} is already on dev.`);
     } catch (e) {
       if (e instanceof ApiRequestError && e.status === 403) throw new CliError("Only the Oche owner can add the workflow. Ask them to run `oche npm setup`, then run it yourself for the npm side.");
@@ -151,6 +155,9 @@ export async function npmSetupCommand(
   if (already) {
     ok(`npm already trusts ${WORKFLOW_FILE} in ${slug(repo)}`);
   } else {
+    // "publish.yml" is also the tail of "oche-publish.yml", so match the whole file name.
+    const old = others.find((f) => trusted && new RegExp(`(^|[^\\w.-])${f.replace(/\./g, "\\.")}`).test(trusted));
+    if (old) print(`\nnpm trusts ${old} to publish ${name} today. This points it at ${WORKFLOW_FILE} instead.`);
     print(`\nnpm will trust ${c.bold(`${slug(repo)} → .github/workflows/${WORKFLOW_FILE}`)} to publish ${name}. npm may ask for 2FA.`);
     if (!(await ask("Continue?"))) throw new CliError("Stopped before changing npm's trust settings.");
     await npmLive(bin, ["trust", "github", name, "--file", WORKFLOW_FILE, "--repository", slug(repo), "--allow-publish", ...(opts.yes ? ["--yes"] : [])]);
