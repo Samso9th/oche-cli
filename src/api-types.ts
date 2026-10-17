@@ -365,12 +365,15 @@ export interface RollbackOptions {
   images: { tag: string; createdAt: string; isCurrent: boolean; commitMessage: string | null; deployedAt: string | null }[];
 }
 
-export type EnvIssue = "missing-in-prod" | "missing-in-staging" | "same-secret" | null;
+export type EnvIssue = "missing-in-prod" | "missing-in-staging" | "empty-value" | "same-secret" | null;
 
 /** Names and whether two stages share a value. Values never leave the server. */
 export interface EnvRow {
   key: string;
+  /** The key is defined on the stage, whatever it holds. */
   present: Partial<Record<Stage, boolean>>;
+  /** The key is defined and holds something other than whitespace. Absent stages aren't listed. */
+  hasValue: Partial<Record<Stage, boolean>>;
   sameStagingProd: boolean;
   issue: EnvIssue;
 }
@@ -379,7 +382,7 @@ export interface EnvComparison {
   label: string;
   apps: Partial<Record<Stage, { uuid: string; name: string }>>;
   rows: EnvRow[];
-  counts: { missingInProd: number; missingInStaging: number; sameSecret: number };
+  counts: { missingInProd: number; missingInStaging: number; emptyValue: number; sameSecret: number };
 }
 
 /** GET /v1/repos/:owner/:repo/envs */

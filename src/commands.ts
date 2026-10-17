@@ -509,7 +509,7 @@ export function buildProgram(): Command {
 
   program
     .command("envs")
-    .description("Which stages define each environment variable (names only, never values)")
+    .description("Which stages define each environment variable, and which are defined but empty (names only, never values)")
     .argument(repoArg, repoHelp)
     .addOption(stageOption("only this stage's column"))
     .option("--key <name>", "only variables whose name contains this")
