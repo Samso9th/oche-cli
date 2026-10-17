@@ -497,7 +497,7 @@ export function buildProgram(): Command {
     .description("Add the publish workflow and let npm trust it (uses your npm login)")
     .argument(repoArg, repoHelp)
     .option("-y, --yes", "don't ask for confirmation")
-    .option("--force", "set up even if another workflow already publishes to npm")
+    .option("--keep-existing", "keep a workflow that already publishes to npm instead of replacing it")
     .option("--skip-pr", "only do the npm side; don't open the workflow PR")
     .action((repo, opts) => npmSetupCommand(client, repo, opts));
   npm

@@ -440,12 +440,17 @@ export interface NpmStatusResponse {
   steps: NpmStep[];
 }
 
-/** POST /v1/repos/:owner/:repo/npm  { dryRun?, force? } → the workflow and, unless dry, the PR. */
-export type NpmSetupRequest = { dryRun?: boolean; force?: boolean };
+/**
+ * POST /v1/repos/:owner/:repo/npm → the workflow and, unless dry, the PR.
+ * When another workflow already publishes, pass replace (the PR deletes it) or force (keep both).
+ */
+export type NpmSetupRequest = { dryRun?: boolean; replace?: boolean; force?: boolean };
 export interface NpmSetupResponse {
   workflow: string;
   path: string;
   branch: string;
+  /** Workflows the PR deletes. */
+  removes: string[];
   pr: { number: number; url: string; merged: boolean } | null;
 }
 
