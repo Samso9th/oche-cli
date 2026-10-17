@@ -33,7 +33,7 @@ oche logs --stage prod            # the running container's log: why it's crash-
 oche logs --stage prod --failures # just the errors and the tail
 oche logs --app api --build       # the build log of the latest deployment instead
 oche deployments                  # recent deployments per app: status, commit, how long, when
-oche envs                         # which stages define each variable (names only)
+oche envs                         # which stages define each variable, and which are empty (names only)
 oche envs --stage prod --key DATABASE_URL
 oche deploy --stage staging       # redeploy (--force rebuilds without the cache); asks first
 oche rollback --app api           # the images Coolify can go back to
@@ -44,7 +44,14 @@ oche preflight --to prod          # missing variables, and whether staging is he
 
 Each one picks the app with `--app <name>` (or the start of its uuid) or `--stage prod|staging|dev`; with one app it needs neither, and with several it says which ones there are. `oche deploy` and `oche rollback` ask before they act unless you pass `-y`.
 
-`oche envs` never prints values. The server compares names, and whether staging and production hold the same value, and sends only that. Log lines Coolify marks as holding secrets are left out too.
+`oche envs` marks each variable per stage: `✓` set, `∅` defined but empty, `·` not defined, `-` no app on that stage. A `∅` is counted as a problem, not a note: the key is there, so nothing complains, and the app reads it and gets nothing.
+
+```
+  VARIABLE          dev  staging  prod
+  TURNSTILE_SECRET  ∅    ∅        ∅     defined but empty
+```
+
+`oche envs` never prints values. The server compares names, whether each key holds anything at all, and whether staging and production hold the same value, and sends only that. Log lines Coolify marks as holding secrets are left out too.
 
 ## Without a server: `oche pr`
 
