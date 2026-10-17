@@ -187,13 +187,27 @@ export async function deploymentsCommand(getClient: GetClient, repoArg: string |
 const ISSUE_LABEL: Record<Exclude<EnvIssue, null>, string> = {
   "missing-in-prod": "missing in production",
   "missing-in-staging": "missing in staging",
+  "empty-value": "defined but empty",
   "same-secret": "same value in staging and production",
 };
 
+/** A key with nothing in it leaves the app running without the setting, so it reads as red, not as a note. */
 const issueText = (issue: EnvIssue) =>
-  issue === null ? "" : issue === "missing-in-prod" ? c.red(ISSUE_LABEL[issue]) : c.yellow(ISSUE_LABEL[issue]);
+  issue === null ? "" : issue === "missing-in-prod" || issue === "empty-value" ? c.red(ISSUE_LABEL[issue]) : c.yellow(ISSUE_LABEL[issue]);
 
-/** Which stages define each variable. Values stay on the server; only names and matches are compared. */
+/**
+ * The markers, spelled out. ∅ is the one that needs saying: a tick used to cover
+ * an empty value too, which is how an empty TURNSTILE_SECRET read as configured
+ * on all three stages while nothing was protecting production.
+ */
+function legend(): string {
+  const set = `${c.green("✓")} ${c.dim("set")}`;
+  const empty = `${c.red("∅")} ${c.dim("defined but empty, so the app sees nothing")}`;
+  const absent = `${c.red("·")} ${c.dim("not defined")}`;
+  return `${set}  ${empty}  ${absent}  ${c.dim("-  no app on that stage")}`;
+}
+
+/** Which stages define each variable, and which hold nothing. Values stay on the server; only names and matches are compared. */
 export async function envsCommand(getClient: GetClient, repoArg: string | undefined, opts: { stage?: Stage; key?: string; json?: boolean }) {
   const repo = await resolveRepo(repoArg);
   const { groups } = await (await getClient()).envs(repo);
@@ -212,33 +226,42 @@ export async function envsCommand(getClient: GetClient, repoArg: string | undefi
 
   kept.forEach((g, i) => {
     if (i) print();
-    printGroup(g, opts.stage, !key);
+    envGroupLines(g, opts.stage, !key).forEach((l) => print(l));
   });
-  print(c.dim("\nOche compares names, and whether staging and production hold the same value. It never shows values."));
+  print(`\n${legend()}`);
+  print(c.dim("Oche compares names, and whether staging and production hold the same value. It never shows values."));
 }
 
-function printGroup(group: EnvComparison, only: Stage | undefined, totals: boolean) {
+/** One group's heading, table and totals. Returned rather than printed, so it can be read back in a test. */
+export function envGroupLines(group: EnvComparison, only: Stage | undefined, totals: boolean): string[] {
   const stages = STAGES.filter((s) => group.apps[s] && (!only || s === only));
   const where = stages.map((s) => `${s}: ${group.apps[s]!.name}`).join(" · ");
-  print(`${c.bold(group.label)}  ${c.dim(where)}`);
   const header: Cell[] = [["VARIABLE", c.dim("VARIABLE")], ...stages.map((s): Cell => [s, c.dim(s)]), ""];
   const rows = group.rows.map((r): Cell[] => [
     r.key,
     ...stages.map((s): Cell => {
       if (r.present[s] === undefined) return ["-", c.dim("-")];
-      return r.present[s] ? ["✓", c.green("✓")] : ["·", c.red("·")];
+      if (!r.present[s]) return ["·", c.red("·")];
+      // Defined and empty gets its own marker. The same tick as a configured key is what hid it.
+      // Optional chain on purpose. A server older than this client sends no
+      // hasValue at all, and reading it blind threw "Cannot read properties of
+      // undefined" on every row, which broke the whole command rather than
+      // degrading it. Unknown means "defined", the behaviour before this field.
+      return r.hasValue?.[s] === false ? ["∅", c.red("∅")] : ["✓", c.green("✓")];
     }),
     issueText(r.issue),
   ]);
-  columns([header, ...rows]).forEach((l) => print(l));
-  if (!totals) return;
-  const { missingInProd, missingInStaging, sameSecret } = group.counts;
+  const lines = [`${c.bold(group.label)}  ${c.dim(where)}`, ...columns([header, ...rows])];
+  if (!totals) return lines;
+  const { missingInProd, missingInStaging, emptyValue, sameSecret } = group.counts;
   const issues = [
+    emptyValue ? c.red(`${emptyValue} defined but empty`) : "",
     missingInProd ? c.red(`${missingInProd} missing in production`) : "",
     missingInStaging ? c.yellow(`${missingInStaging} missing in staging`) : "",
     sameSecret ? c.yellow(`${sameSecret} shared with staging`) : "",
   ].filter(Boolean);
-  print(issues.length ? `  ${issues.join(c.dim(" · "))}` : c.dim("  in step across environments"));
+  lines.push(issues.length ? `  ${issues.join(c.dim(" · "))}` : c.dim("  in step across environments"));
+  return lines;
 }
 
 /* ------------------------------------------------------------------ */
